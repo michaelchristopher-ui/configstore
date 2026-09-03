@@ -1,0 +1,57 @@
+# A single-node etcd for development, and only for development.
+#
+# One node is not a durable store — it is a file on one disk with a daemon in
+# front of it. etcd's durability comes from Raft replication, so anything that
+# matters runs three or five members (three tolerates one failure) on separate
+# hosts with low-latency disks; etcd fsyncs every write to its WAL and is more
+# sensitive to disk latency than to CPU. Provision that with Terraform, not with
+# this file.
+#
+# The flags below are not decoration. Both of them are the difference between a
+# store that keeps working and one that wedges:
+services:
+  etcd:
+    image: gcr.io/etcd-development/etcd:v3.5.17
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=dev
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-cluster=dev=http://127.0.0.1:2380
+      - --initial-advertise-peer-urls=http://127.0.0.1:2380
+      # MVCC keeps every revision until compacted, so without this the backend
+      # grows forever until it trips the quota below and the cluster goes
+      # read-only with a NOSPACE alarm that has to be cleared by hand. Keeping
+      # 1000 revisions is generous for configuration: this store's own history
+      # lives in ordinary keys and is unaffected by compaction, so the only
+      # thing being discarded is the ability to read old revisions directly.
+      - --auto-compaction-mode=revision
+      # Revisions, not a duration. Do not be alarmed by the startup log
+      # rendering this as `"auto-compaction-retention":"1µs"`: etcd holds the
+      # value in a Duration-typed field and zap prints it as one, while the
+      # revision compactor reads the integer. Measured on 3.5.17 rather than
+      # assumed — a cluster started with `=10`, after 41 revisions, compacted
+      # to exactly revision 31 (latest-10); `=10` logs as "10ns" by the same
+      # cosmetic path. The periodic-mode equivalent would be `=1h`.
+      - --auto-compaction-retention=1000
+      # The default is this same 2 GiB. Stated explicitly because it is a limit
+      # worth knowing you have: etcd is a metadata store, and a config store
+      # that approaches it is storing the wrong thing.
+      - --quota-backend-bytes=2147483648
+      # Compaction frees pages inside the file but does not return them to the
+      # filesystem; `etcdutl defrag` does. Watch dbSize vs dbSizeInUse.
+    ports:
+      - "2379:2379"
+    volumes:
+      - etcd-data:/etcd-data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  etcd-data:

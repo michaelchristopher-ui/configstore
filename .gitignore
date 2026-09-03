@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+dist/
+build/
+# Client snapshot caches — per-deployment state, never source.
+*config-cache.json
+.env
+.env.local
+.DS_Store
